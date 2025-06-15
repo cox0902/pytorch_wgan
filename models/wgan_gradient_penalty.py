@@ -218,7 +218,7 @@ class Config:
     vocab_size = 90
     image_size = 256
     patch_size = 16 
-    dim = 512 
+    dim = 256 
     num_layer = 6
     num_head = 8 
     mlp_dim = 1024 

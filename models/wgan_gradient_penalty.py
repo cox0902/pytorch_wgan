@@ -413,20 +413,25 @@ class WGAN_GP(object):
 
             self.G.zero_grad()
 
-            items = self.data.__next__()
-            images = items["image"] 
-            codes = items["code"]
+            while True:
+                items = self.data.__next__()
+                images = items["image"] 
+                codes = items["code"]
 
-            # train generator
-            # compute loss with fake images
-            z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
-            fake_rects = self.G(images, codes, z)
-            g_loss = self.D(images, codes, fake_rects)
-            g_loss = g_loss.mean()
-            g_loss.backward(mone)
-            g_cost = -g_loss
-            self.g_optimizer.step()
-            print(f'Generator iteration: {g_iter}/{self.generator_iters}, g_loss: {g_loss}')
+                if images.size(0) != self.batch_size:
+                    continue
+
+                # train generator
+                # compute loss with fake images
+                z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
+                fake_rects = self.G(images, codes, z)
+                g_loss = self.D(images, codes, fake_rects)
+                g_loss = g_loss.mean()
+                g_loss.backward(mone)
+                g_cost = -g_loss
+                self.g_optimizer.step()
+                print(f'Generator iteration: {g_iter}/{self.generator_iters}, g_loss: {g_loss}')
+                break
 
             # Saving model and sampling images every 1000th generator iterations
             if (g_iter) % SAVE_PER_TIMES == 0:

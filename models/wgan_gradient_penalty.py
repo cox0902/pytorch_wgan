@@ -341,7 +341,8 @@ class WGAN_GP(object):
         self.lambda_term = 10
 
     def check_cuda(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.cuda = torch.cuda.is_available()
+        self.device = torch.device("cuda" if self.cuda else "cpu")
         print("Device: {}".format(self.device))
         self.D.to(self.device)
         self.G.to(self.device)
@@ -392,7 +393,11 @@ class WGAN_GP(object):
                 d_loss_fake.backward(one)
 
                 # Train with gradient penalty
-                gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
+                if self.cuda:
+                    with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False):
+                        gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
+                else:
+                    gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
                 gradient_penalty.backward()
 
 

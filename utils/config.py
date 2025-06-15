@@ -16,6 +16,9 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=50, help='The number of epochs to run')
     parser.add_argument('-b', '--batch_size', type=int, default=64, help='The size of batch')
 
+    parser.add_argument('--share-vit', action="store_true", default=False)
+    parser.add_argument('--share-emb', action="store_true", default=False)
+
     parser.add_argument('--load_D', type=str, default='False', help='Path for loading Discriminator network')
     parser.add_argument('--load_G', type=str, default='False', help='Path for loading Generator network')
     parser.add_argument('--generator_iters', type=int, default=10000, help='The number of iterations for generator in WGAN model.')

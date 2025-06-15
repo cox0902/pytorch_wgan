@@ -5,6 +5,7 @@ import math
 import copy
 import time as t
 
+import numpy as np
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 
@@ -15,6 +16,7 @@ import torch.optim as optim
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.autograd import Variable
 from torch import autograd
+import torchvision
 from torchvision import utils
 
 from einops import rearrange, repeat
@@ -224,62 +226,52 @@ class Config:
     emb_dropout = 0.1
 
 
-class Generator(nn.Module):
+class Embedding(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.encoder = ViT(
-            image_size=Config.image_size,
-            patch_size=Config.patch_size,
-            dim=Config.dim,
-            depth=Config.num_layer,
-            heads=Config.num_head,
-            mlp_dim=Config.mlp_dim,
-            dropout=Config.dropout,
-            emb_dropout=Config.emb_dropout
-        )
+        self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
+        self.reg_emb = nn.Linear(4, Config.dim)
+        self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+
+    def forward(self, code, rect):
+        return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
+
+
+class Generator(nn.Module):
+
+    def __init__(self, vit, emb):
+        super().__init__()
+        self.encoder = vit
         self.decoder = Decoder(
             dim=Config.dim, 
             num_head=Config.num_head, 
             num_layers=Config.num_layer
         )
-        self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
-        self.reg_emb = nn.Linear(4, Config.dim)
-        self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        self.emb = emb
         self.output = nn.Linear(Config.dim, 4)
 
     def forward(self, image, code, rect):
         memory = self.encoder(image)
-        code_emb = self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
-        outs = self.decoder(code_emb, memory, tgt_key_padding_mask=(code == 0))
+        embs = self.emb(code, rect)
+        outs = self.decoder(embs, memory, tgt_key_padding_mask=(code == 0))
         return self.output(outs).sigmoid()
 
 
 class Discriminator(nn.Module):
 
-    def __init__(self):
+    def __init__(self, vit, emb):
         super().__init__()
-        self.encoder = ViT(
-            image_size=Config.image_size,
-            patch_size=Config.patch_size,
-            dim=Config.dim,
-            depth=Config.num_layer,
-            heads=Config.num_head,
-            mlp_dim=Config.mlp_dim,
-            dropout=Config.dropout,
-            emb_dropout=Config.emb_dropout
-        )
+        self.encoder = vit
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=Config.dim, 
             nhead=Config.num_head, 
             batch_first=True
         )
         self.txt_encoder = nn.TransformerEncoder(encoder_layer, Config.num_layer)
-        self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
-        self.reg_emb = nn.Linear(4, Config.dim)
-        self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        self.emb = emb
         self.classifier = nn.Sequential(
-            nn.Linear(Config.dim * 2, 512),
+            nn.Linear(Config.dim * 2, Config.dim),
             nn.ReLU(),
             nn.Dropout(Config.dropout),
             nn.Linear(Config.dim, 1),
@@ -287,8 +279,8 @@ class Discriminator(nn.Module):
 
     def forward(self, image, code, rect):
         image_features = self.encoder(image)[:, 0, :]
-        code_emb = self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
-        text_features = self.txt_encoder(code_emb, src_key_padding_mask=(code == 0))[:, 0, :]
+        embs = self.emb(code, rect)
+        text_features = self.txt_encoder(embs, src_key_padding_mask=(code == 0))[:, 0, :]
         combined = torch.cat([text_features, image_features], dim=1)
         return self.classifier(combined)
 
@@ -317,12 +309,47 @@ def compute_iou(
     return intsctk / (unionk + eps)
 
 
+def create_vit():
+    encoder = ViT(
+        image_size=Config.image_size,
+        patch_size=Config.patch_size,
+        dim=Config.dim,
+        depth=Config.num_layer,
+        heads=Config.num_head,
+        mlp_dim=Config.mlp_dim,
+        dropout=Config.dropout,
+        emb_dropout=Config.emb_dropout
+    )
+    return encoder
+
+def create_emb():
+    return Embedding()
+
+
+def count_trainale_parameters(model: nn.Module):
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    # print(f"Trainable parameters: {params:,}")
+    return params
+
+
 class WGAN_GP(object):
 
     def __init__(self, args):
         print("WGAN_GradientPenalty init model.")
-        self.G = Generator()
-        self.D = Discriminator()
+
+        vit_g = create_vit()
+        vit_d = vit_g if args.share_vit else create_vit()
+
+        emb_g = create_emb()
+        emb_d = emb_g if args.share_emb else create_emb()
+
+        self.G = Generator(vit_g, emb_g)
+        self.D = Discriminator(vit_d, emb_d)
+
+        g_params = count_trainale_parameters(self.G)
+        d_params = count_trainale_parameters(self.D)
+        print(f"Trainable parameters: G={g_params:,}, D={d_params:,}")
 
         self.check_cuda()  # Check if cuda is available
 
@@ -477,6 +504,9 @@ class WGAN_GP(object):
                         t_rects = t_rects[mask]
                         p_rects = p_rects[mask]
                         # print(code_lens.sum(), t_rects.shape)
+
+                        p_rects = torchvision.ops.box_convert(p_rects, "cxcywh", "xyxy")
+                        t_rects = torchvision.ops.box_convert(t_rects, "cxcywh", "xyxy")
 
                         ious = compute_iou(t_rects, p_rects)
                         # print(ious.shape)

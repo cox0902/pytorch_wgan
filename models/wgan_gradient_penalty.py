@@ -461,7 +461,7 @@ class WGAN_GP(object):
                         code_lens = batch["code_len"].long()
                         rects = batch["rect"]
 
-                        z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
+                        z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
                         samples = self.G(images, codes, z)
 
                         t_label = pack_padded_sequence(codes, code_lens, batch_first=True, enforce_sorted=False).data

@@ -378,7 +378,7 @@ class WGAN_GP(object):
         self.t_begin = t.time()
 
         # Now batches are callable self.data.next()
-        self.data = self.get_infinite_batches(train_loader)
+        # self.data = self.get_infinite_batches(train_loader)
 
         one = torch.tensor(1, dtype=torch.float).to(self.device)
         mone = one * -1
@@ -392,17 +392,19 @@ class WGAN_GP(object):
             d_loss_fake = 0
             Wasserstein_D = 0
             # Train Dicriminator forward-loss-backward-update self.critic_iter times while 1 Generator forward-loss-backward-update
-            for d_iter in range(self.critic_iter):
+            # for d_iter in range(self.critic_iter):
+            for d_iter, items in enumerate(train_loader):
                 self.D.zero_grad()
 
-                items = self.data.__next__()
+                # items = self.data.__next__()
+                self.to_device(items, ["code_len"])
                 images = items["image"]
                 codes = items["code"]
                 rects = items["rect"]
 
                 # Check for batch to have full batch_size
-                if (images.size()[0] != self.batch_size):
-                    continue
+                # if (images.size()[0] != self.batch_size):
+                #     continue
 
                 # Train discriminator
                 # WGAN - Training discriminator more iterations than generator
@@ -412,7 +414,7 @@ class WGAN_GP(object):
                 d_loss_real.backward(mone)
 
                 # Train with fake images
-                z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
+                z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
 
                 fake_rects = self.G(images, codes, z)
                 d_loss_fake = self.D(images, codes, fake_rects)
@@ -432,7 +434,7 @@ class WGAN_GP(object):
                 d_loss = d_loss_fake - d_loss_real + gradient_penalty
                 Wasserstein_D = d_loss_real - d_loss_fake
                 self.d_optimizer.step()
-                print(f'  Discriminator iteration: {d_iter}/{self.critic_iter}, loss_fake: {d_loss_fake}, loss_real: {d_loss_real}')
+                print(f'  Discriminator iteration: {d_iter}/{len(train_loader)}, loss_fake: {d_loss_fake}, loss_real: {d_loss_real}')
 
             # Generator update
             for p in self.D.parameters():
@@ -440,25 +442,27 @@ class WGAN_GP(object):
 
             self.G.zero_grad()
 
-            while True:
-                items = self.data.__next__()
+            # while True:
+            for s_iter, items in enumerate(train_loader):
+                # items = self.data.__next__()
+                self.to_device(items)
                 images = items["image"] 
                 codes = items["code"]
 
-                if images.size(0) != self.batch_size:
-                    continue
+                # if images.size(0) != self.batch_size:
+                #     continue
 
                 # train generator
                 # compute loss with fake images
-                z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
+                z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
                 fake_rects = self.G(images, codes, z)
                 g_loss = self.D(images, codes, fake_rects)
                 g_loss = g_loss.mean()
                 g_loss.backward(mone)
                 g_cost = -g_loss
                 self.g_optimizer.step()
-                print(f'Generator iteration: {g_iter}/{self.generator_iters}, g_loss: {g_loss}')
-                break
+                print(f'Generator iteration: {s_iter}/{len(train_loader)}, g_loss: {g_loss}')
+                # break
 
             # Saving model and sampling images every 1000th generator iterations
             if (g_iter) % SAVE_PER_TIMES == 0:
@@ -529,7 +533,7 @@ class WGAN_GP(object):
 
                 })
 
-                print(" ".join([f"{tag}: {value}" for tag, value in info.items()]))
+                print(", ".join([f"{tag}: {value}" for tag, value in info.items()]))
 
         self.t_end = t.time()
         print('Time of training-{}'.format((self.t_end - self.t_begin)))

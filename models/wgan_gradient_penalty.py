@@ -396,9 +396,10 @@ class WGAN_GP(object):
                 if self.cuda:
                     with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False):
                         gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
+                        gradient_penalty.backward()
                 else:
                     gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
-                gradient_penalty.backward()
+                    gradient_penalty.backward()
 
 
                 d_loss = d_loss_fake - d_loss_real + gradient_penalty

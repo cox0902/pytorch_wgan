@@ -472,7 +472,7 @@ class WGAN_GP(object):
                     images = items["image"] 
                     codes = items["code"]
                     rects = items["rect"]
-                    code_lens = batch["code_len"].long()
+                    code_lens = items["code_len"].long()
 
                     # train generator
                     # compute loss with fake images

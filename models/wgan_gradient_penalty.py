@@ -340,19 +340,11 @@ class WGAN_GP(object):
         self.critic_iter = 5
         self.lambda_term = 10
 
-    def get_torch_variable(self, arg):
-        if self.cuda:
-            return Variable(arg).cuda(self.cuda_index)
-        else:
-            return Variable(arg)
-
     def check_cuda(self):
-        self.cuda = torch.cuda.is_available()
-        print("Cuda enabled flag: {}".format(self.cuda))
-        if self.cuda:
-            self.cuda_index = 0
-            self.D.cuda(self.cuda_index)
-            self.G.cuda(self.cuda_index)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print("Device: {}".format(self.device))
+        self.D.to(self.device)
+        self.G.to(self.device)
 
     def train(self, train_loader, valid_loader):
         self.t_begin = t.time()
@@ -360,11 +352,8 @@ class WGAN_GP(object):
         # Now batches are callable self.data.next()
         self.data = self.get_infinite_batches(train_loader)
 
-        one = torch.tensor(1, dtype=torch.float)
+        one = torch.tensor(1, dtype=torch.float).to(self.device)
         mone = one * -1
-        if self.cuda:
-            one = one.cuda(self.cuda_index)
-            mone = mone.cuda(self.cuda_index)
 
         for g_iter in range(self.generator_iters):
             # Requires grad, Generator requires_grad = False
@@ -395,7 +384,7 @@ class WGAN_GP(object):
                 d_loss_real.backward(mone)
 
                 # Train with fake images
-                z = self.get_torch_variable(torch.randn(self.batch_size, codes.size()[1], 4))
+                z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
 
                 fake_rects = self.G(images, codes, z)
                 d_loss_fake = self.D(images, codes, fake_rects)
@@ -424,7 +413,7 @@ class WGAN_GP(object):
 
             # train generator
             # compute loss with fake images
-            z = self.get_torch_variable(torch.randn(self.batch_size, codes.size()[1], 4))
+            z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
             fake_rects = self.G(images, codes, z)
             g_loss = self.D(images, codes, fake_rects)
             g_loss = g_loss.mean()
@@ -460,12 +449,13 @@ class WGAN_GP(object):
                 with torch.no_grad():
                     total_ious, count_ious = 0, 0
                     for batch in valid_loader:
-                        images = self.get_torch_variable(batch["image"]) 
-                        codes = self.get_torch_variable(batch["code"])
+                        self.to_device(batch, ["code_len"])
+                        images = batch["image"]
+                        codes = batch["code"]
                         code_lens = batch["code_len"].long()
-                        rects = self.get_torch_variable(batch["rect"])
+                        rects = batch["rect"]
 
-                        z = self.get_torch_variable(torch.randn(self.batch_size, codes.size()[1], 4))
+                        z = torch.randn(self.batch_size, codes.size()[1], 4).to(self.device)
                         samples = self.G(images, codes, z)
 
                         t_label = pack_padded_sequence(codes, code_lens, batch_first=True, enforce_sorted=False).data
@@ -518,29 +508,18 @@ class WGAN_GP(object):
 
 
     def calculate_gradient_penalty(self, images, codes, real_rects, fake_rects):
-        eta = torch.FloatTensor(self.batch_size, 1, 1).uniform_(0,1)
+        eta = torch.FloatTensor(self.batch_size, 1, 1).uniform_(0, 1).to(self.device)
         eta = eta.expand(self.batch_size, real_rects.size(1), real_rects.size(2))
-        if self.cuda:
-            eta = eta.cuda(self.cuda_index)
-        else:
-            eta = eta
 
         interpolated = eta * real_rects + ((1 - eta) * fake_rects)
 
-        if self.cuda:
-            interpolated = interpolated.cuda(self.cuda_index)
-        else:
-            interpolated = interpolated
-
         # define it to calculate gradient
-        interpolated = Variable(interpolated, requires_grad=True)
+        interpolated.requires_grad = True
 
         # calculate probability of interpolated examples
         prob_interpolated = self.D(images, codes, interpolated)
 
-        ones = torch.ones(prob_interpolated.size())
-        if self.cuda:
-            ones = ones.cuda(self.cuda_index)  
+        ones = torch.ones(prob_interpolated.size()).to(self.device)
 
         # calculate gradients of probabilities with respect to examples
         gradients = autograd.grad(outputs=prob_interpolated, 
@@ -586,11 +565,16 @@ class WGAN_GP(object):
         print('Generator model loaded from {}.'.format(G_model_path))
         print('Discriminator model loaded from {}-'.format(D_model_path))
 
+    def to_device(self, batch, ignores = []):
+        for k, v in batch.items():
+            if k in ignores:
+                continue
+            batch[k] = v.to(self.device)
+
     def get_infinite_batches(self, data_loader):
         while True:
             for _, batch in enumerate(data_loader):
-                for k, v in batch.items():
-                    batch[k] = self.get_torch_variable(v)
+                self.to_device(batch, ["code_len"])
                 yield batch
 
     def generate_latent_walk(self, number):

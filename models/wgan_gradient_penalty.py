@@ -23,7 +23,7 @@ from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
 
-SAVE_PER_TIMES = 100
+SAVE_PER_TIMES = 1
 
 
 def pair(t):
@@ -366,6 +366,7 @@ class WGAN_GP(object):
         self.generator_iters = args.generator_iters
         self.critic_iter = 5
         self.lambda_term = 10
+        self.normal_train = args.normal_train
 
     def check_cuda(self):
         self.cuda = torch.cuda.is_available()
@@ -463,6 +464,37 @@ class WGAN_GP(object):
                 self.g_optimizer.step()
                 print(f'Generator iteration: {s_iter}/{len(train_loader)}, g_loss: {g_loss}')
                 # break
+
+            if self.normal_train:
+                for s_iter, items in enumerate(train_loader):
+                    # items = self.data.__next__()
+                    self.to_device(items, ["code_len"])
+                    images = items["image"] 
+                    codes = items["code"]
+                    rects = items["rect"]
+                    code_lens = batch["code_len"].long()
+
+                    # train generator
+                    # compute loss with fake images
+                    z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
+                    fake_rects = self.G(images, codes, z)
+
+                    t_label = pack_padded_sequence(codes, code_lens, batch_first=True, enforce_sorted=False).data
+                    t_rects = pack_padded_sequence(rects, code_lens, batch_first=True, enforce_sorted=False).data
+                    p_rects = pack_padded_sequence(fake_rects, code_lens, batch_first=True, enforce_sorted=False).data
+
+                    mask = t_label > 7
+                    t_rects = t_rects[mask]
+                    p_rects = p_rects[mask]
+                    # print(code_lens.sum(), t_rects.shape)
+
+                    p_rects = torchvision.ops.box_convert(p_rects, "cxcywh", "xyxy")
+                    t_rects = torchvision.ops.box_convert(t_rects, "cxcywh", "xyxy")
+                
+                    n_loss = torchvision.ops.generalized_box_iou_loss(p_rects, t_rects, reduction="mean")
+                    n_loss.backward()
+                    self.g_optimizer.step()
+                    print(f'Normal iteration: {s_iter}/{len(train_loader)}, n_loss: {n_loss}')
 
             # Saving model and sampling images every 1000th generator iterations
             if (g_iter) % SAVE_PER_TIMES == 0:

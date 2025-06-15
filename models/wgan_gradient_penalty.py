@@ -218,7 +218,7 @@ class Config:
     vocab_size = 90
     image_size = 256
     patch_size = 16 
-    dim = 256 
+    dim = 512 
     num_layer = 6
     num_head = 8 
     mlp_dim = 1024 
@@ -232,10 +232,13 @@ class Embedding(nn.Module):
         super().__init__()
         self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
         self.reg_emb = nn.Linear(4, Config.dim)
-        self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        # self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        self.dropout = nn.Dropout(Config.emb_dropout)
 
     def forward(self, code, rect):
-        return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
+        # return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
+        return self.dropout(self.tok_emb(code) + self.reg_emb(rect))
+
 
 
 class Generator(nn.Module):
@@ -255,7 +258,15 @@ class Generator(nn.Module):
         memory = self.encoder(image)
         embs = self.emb(code, rect)
         outs = self.decoder(embs, memory, tgt_key_padding_mask=(code == 0))
-        return self.output(outs).sigmoid()
+        outs = self.output(outs).sigmoid()
+        # print(outs.shape, code.shape)
+        mask = code <= 7
+        mask = mask.unsqueeze(-1)
+        outs = outs.masked_fill(mask, 0)
+        # print(outs)
+        # print(rect)
+        # assert False
+        return outs
 
 
 class Discriminator(nn.Module):

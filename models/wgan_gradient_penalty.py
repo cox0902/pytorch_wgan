@@ -119,7 +119,7 @@ class WGAN_GP(object):
                 d_loss = d_loss_fake - d_loss_real + gradient_penalty
                 Wasserstein_D = d_loss_real - d_loss_fake
                 self.d_optimizer.step()
-                print(f'  Discriminator iteration: {d_iter}/{len(train_loader)}, loss_fake: {d_loss_fake}, loss_real: {d_loss_real}')
+                print(f'  Discriminator iteration: {d_iter}/{self.critic_iter}, loss_fake: {d_loss_fake}, loss_real: {d_loss_real}')
 
             # Generator update
             for p in self.D.parameters():
@@ -146,7 +146,7 @@ class WGAN_GP(object):
             g_loss.backward(mone)
             g_cost = -g_loss
             self.g_optimizer.step()
-            print(f'Generator iteration: {s_iter}/{len(train_loader)}, g_loss: {g_loss}')
+            print(f'Generator iteration: {g_iter}/{self.generator_iters}, g_loss: {g_loss}')
             # break
 
             if self.normal_train:

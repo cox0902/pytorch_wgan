@@ -18,7 +18,7 @@ from torch import autograd
 import torchvision
 from torchvision import utils
 
-from .components import create_vit, create_emb, Generator, Discriminator, count_trainale_parameters
+from .components import create_model, count_trainale_parameters
 
 
 SAVE_PER_TIMES = 1
@@ -29,15 +29,8 @@ class WGAN_GP(object):
     def __init__(self, args):
         print("WGAN_GradientPenalty init model.")
 
-        vit_g = create_vit()
-        vit_d = vit_g if args.share_vit else create_vit()
-
-        emb_g = create_emb()
-        emb_d = emb_g if args.share_emb else create_emb()
-
-        self.G = Generator(vit_g, emb_g)
-        self.D = Discriminator(vit_d, emb_d)
-
+        self.G, self.D = create_model(args)
+        
         g_params = count_trainale_parameters(self.G)
         d_params = count_trainale_parameters(self.D)
         print(f"Trainable parameters: G={g_params:,}, D={d_params:,}")
@@ -70,7 +63,7 @@ class WGAN_GP(object):
         self.t_begin = t.time()
 
         # Now batches are callable self.data.next()
-        # self.data = self.get_infinite_batches(train_loader)
+        self.data = self.get_infinite_batches(train_loader)
 
         one = torch.tensor(1, dtype=torch.float).to(self.device)
         mone = one * -1
@@ -84,11 +77,11 @@ class WGAN_GP(object):
             d_loss_fake = 0
             Wasserstein_D = 0
             # Train Dicriminator forward-loss-backward-update self.critic_iter times while 1 Generator forward-loss-backward-update
-            # for d_iter in range(self.critic_iter):
-            for d_iter, items in enumerate(train_loader):
+            for d_iter in range(self.critic_iter):
+            # for d_iter, items in enumerate(train_loader):
                 self.D.zero_grad()
 
-                # items = self.data.__next__()
+                items = self.data.__next__()
                 self.to_device(items, ["code_len"])
                 images = items["image"]
                 codes = items["code"]
@@ -135,26 +128,26 @@ class WGAN_GP(object):
             self.G.zero_grad()
 
             # while True:
-            for s_iter, items in enumerate(train_loader):
-                # items = self.data.__next__()
-                self.to_device(items)
-                images = items["image"] 
-                codes = items["code"]
+            # for s_iter, items in enumerate(train_loader):
+            items = self.data.__next__()
+            self.to_device(items)
+            images = items["image"] 
+            codes = items["code"]
 
-                # if images.size(0) != self.batch_size:
-                #     continue
+            # if images.size(0) != self.batch_size:
+            #     continue
 
-                # train generator
-                # compute loss with fake images
-                z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
-                fake_rects = self.G(images, codes, z)
-                g_loss = self.D(images, codes, fake_rects)
-                g_loss = g_loss.mean()
-                g_loss.backward(mone)
-                g_cost = -g_loss
-                self.g_optimizer.step()
-                print(f'Generator iteration: {s_iter}/{len(train_loader)}, g_loss: {g_loss}')
-                # break
+            # train generator
+            # compute loss with fake images
+            z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
+            fake_rects = self.G(images, codes, z)
+            g_loss = self.D(images, codes, fake_rects)
+            g_loss = g_loss.mean()
+            g_loss.backward(mone)
+            g_cost = -g_loss
+            self.g_optimizer.step()
+            print(f'Generator iteration: {s_iter}/{len(train_loader)}, g_loss: {g_loss}')
+            # break
 
             if self.normal_train:
                 for s_iter, items in enumerate(train_loader):

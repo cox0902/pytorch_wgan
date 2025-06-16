@@ -9,7 +9,7 @@ plt.switch_backend('agg')
 import os
 from torchvision import utils
 
-from .components import Generator, Discriminator, create_vit, create_emb, count_trainale_parameters
+from .components import create_model, count_trainale_parameters
 
 
 SAVE_PER_TIMES = 1
@@ -19,14 +19,7 @@ class WGAN_CP(object):
     def __init__(self, args):
         print("WGAN_CP init model.")
 
-        vit_g = create_vit()
-        vit_d = vit_g if args.share_vit else create_vit()
-
-        emb_g = create_emb()
-        emb_d = emb_g if args.share_emb else create_emb()
-
-        self.G = Generator(vit_g, emb_g)
-        self.D = Discriminator(vit_d, emb_d)
+        self.G, self.D = create_model(args)
 
         g_params = count_trainale_parameters(self.G)
         d_params = count_trainale_parameters(self.D)

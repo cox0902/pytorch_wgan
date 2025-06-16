@@ -231,6 +231,19 @@ class Embedding(nn.Module):
         return self.dropout(self.tok_emb(code) + self.reg_emb(rect))
 
 
+class MaskEmbedding(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
+        self.reg_emb = nn.Linear(256 * 256, Config.dim)
+        # self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        self.dropout = nn.Dropout(Config.emb_dropout)
+
+    def forward(self, code, mask):
+        # return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
+        return self.dropout(self.tok_emb(code) + self.reg_emb(mask.view(-1, 256 * 256)))
+
 
 class Generator(nn.Module):
 
@@ -272,11 +285,14 @@ class Discriminator(nn.Module):
         )
         self.txt_encoder = nn.TransformerEncoder(encoder_layer, Config.num_layer)
         self.emb = emb
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(Config.dim * 2, Config.dim),
+        #     nn.ReLU(),
+        #     nn.Dropout(Config.dropout),
+        #     nn.Linear(Config.dim, 1),
+        # )
         self.classifier = nn.Sequential(
-            nn.Linear(Config.dim * 2, Config.dim),
-            nn.ReLU(),
-            nn.Dropout(Config.dropout),
-            nn.Linear(Config.dim, 1),
+            nn.Linear(Config.dim * 2, 1),
         )
 
     def forward(self, image, code, rect):
@@ -324,8 +340,19 @@ def create_vit():
     )
     return encoder
 
+
 def create_emb():
     return Embedding()
+
+
+def create_model(args):
+    vit_g = create_vit()
+    vit_d = vit_g if args.share_vit else create_vit()
+
+    emb_g = create_emb()
+    emb_d = emb_g if args.share_emb else create_emb()
+
+    return Generator(vit_g, emb_g), Discriminator(vit_d, emb_d)
 
 
 def count_trainale_parameters(model: nn.Module):

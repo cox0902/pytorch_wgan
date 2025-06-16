@@ -1,8 +1,11 @@
 from typing import *
 
+from functools import partial
+
 from utils.config import parse_args
 from utils.data_loader import get_data_loader
 
+from models.components import evaluate
 from models.wgan_gradient_penalty import WGAN_GP
 
 
@@ -16,7 +19,7 @@ def main(args):
 
     # Start model training
     if not args.test_only:
-        model.train(train_loader, valid_loader)
+        model.train(train_loader, partial(evaluate, valid_loader=valid_loader))
 
     # start evaluating on test data
     else:

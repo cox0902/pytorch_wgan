@@ -8,6 +8,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Pytorch implementation of GAN models.")
 
     parser.add_argument('--test-only', action="store_true", default=False)
+    parser.add_argument('--model', type=str, default="GP", help='name')
 
     parser.add_argument('--image-path', required=True, help='path to image')
     parser.add_argument('--code-path', required=True, help='path to code')

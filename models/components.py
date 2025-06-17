@@ -12,7 +12,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 
 import torchvision
 
-from einops import rearrange, repeat
+from einops import rearrange, repeat, einsum
 from einops.layers.torch import Rearrange
 
 
@@ -209,7 +209,7 @@ class Config:
     vocab_size = 90
     image_size = 256
     patch_size = 16 
-    dim = 512 
+    dim = 256  # 512 
     num_layer = 6
     num_head = 8 
     mlp_dim = 1024 
@@ -223,12 +223,12 @@ class Embedding(nn.Module):
         super().__init__()
         self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
         self.reg_emb = nn.Linear(4, Config.dim)
-        # self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
-        self.dropout = nn.Dropout(Config.emb_dropout)
+        self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        # self.dropout = nn.Dropout(Config.emb_dropout)
 
     def forward(self, code, rect):
-        # return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
-        return self.dropout(self.tok_emb(code) + self.reg_emb(rect))
+        return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
+        # return self.dropout(self.tok_emb(code) + self.reg_emb(rect))
 
 
 class MaskEmbedding(nn.Module):
@@ -236,16 +236,92 @@ class MaskEmbedding(nn.Module):
     def __init__(self):
         super().__init__()
         self.tok_emb = TokenEmbedding(Config.vocab_size, Config.dim)
-        self.reg_emb = nn.Linear(256 * 256, Config.dim)
-        # self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
-        self.dropout = nn.Dropout(Config.emb_dropout)
+        self.reg_emb = nn.Linear(16 * 16, Config.dim)
+        self.positional_encoding = PositionalEncoding(Config.dim, dropout=Config.dropout)
+        # self.dropout = nn.Dropout(Config.emb_dropout)
 
     def forward(self, code, mask):
-        # return self.positional_encoding(self.tok_emb(code) + self.reg_emb(rect))
-        return self.dropout(self.tok_emb(code) + self.reg_emb(mask.view(-1, 256 * 256)))
+        return self.positional_encoding(self.tok_emb(code) + self.reg_emb(mask.view(-1, 16 * 16)))
+        # return self.dropout(self.tok_emb(code) + self.reg_emb(mask.view(-1, 256 * 256)))
 
+
+class CrossAttention(nn.Module):
+    def __init__(self, query_dim, context_dim, heads=8, dim_head=64, dropout=0.0):
+        super().__init__()
+        inner_dim = dim_head * heads
+
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+
+        self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, query_dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x, context):
+        h = self.heads
+
+        q = self.to_q(x)
+        k = self.to_k(context)
+        v = self.to_v(context)
+
+        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> (b h) n d", h=h), (q, k, v))
+        sim = einsum(q, k, "b i d, b j d -> b i j") * self.scale
+
+        attn = sim.softmax(dim=-1)
+        out = einsum(attn, v, "b i j, b j d -> b i d")
+        out = rearrange(out, "(b h) n d -> b n (h d)", h=h)
+
+        return self.to_out(out)
+
+    
 
 class Generator(nn.Module):
+
+    def __init__(self, vit, emb):
+        super().__init__()
+        self.encoder = vit
+        # self.decoder = Decoder(
+        #     dim=Config.dim, 
+        #     num_head=Config.num_head, 
+        #     num_layers=Config.num_layer
+        # )
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=Config.dim, 
+            nhead=Config.num_head, 
+            batch_first=True
+        )
+        self.txt_encoder = nn.TransformerEncoder(encoder_layer, Config.num_layer)
+        self.projector = CrossAttention(Config.dim, Config.dim, dim_head=Config.dim, heads=Config.num_head, 
+                                        dropout=Config.dropout)
+        self.emb = emb
+        self.output = nn.Sequential(
+            nn.Linear(Config.dim, 4)
+        )
+
+    def forward(self, image, code, rect):
+        memory = self.encoder(image)
+        # print(memory.shape)
+        embs = self.emb(code, rect.sigmoid())
+        # outs = self.decoder(embs, memory, tgt_key_padding_mask=(code == 0))
+        outs = self.txt_encoder(embs, src_key_padding_mask=(code == 0))
+        outs = self.projector(outs, memory)
+        outs = self.output(outs).sigmoid()
+        # print(outs.shape, code.shape)
+        mask = code <= 7
+        mask = mask.unsqueeze(-1)
+        outs = outs.masked_fill(mask, 0)
+        # print(outs)
+        # print(rect)
+        # assert False
+        return outs
+
+
+class MaskGenerator(nn.Module):
 
     def __init__(self, vit, emb):
         super().__init__()
@@ -255,14 +331,31 @@ class Generator(nn.Module):
             num_head=Config.num_head, 
             num_layers=Config.num_layer
         )
+        # encoder_layer = nn.TransformerEncoderLayer(
+        #     d_model=Config.dim, 
+        #     nhead=Config.num_head, 
+        #     batch_first=True
+        # )
+        # self.txt_encoder = nn.TransformerEncoder(encoder_layer, Config.num_layer)
+        # self.projector = CrossAttention(Config.dim, Config.dim, dim_head=Config.dim, heads=Config.num_head, 
+        #                                 dropout=Config.dropout)
         self.emb = emb
-        self.output = nn.Linear(Config.dim, 4)
+        # self.output = nn.Sequential(
+        #     nn.Linear(Config.dim, 4)
+        # )
+        self.generator = nn.Sequential(
+            nn.Linear(Config.dim, 16 * 16),
+            nn.Tanh()
+        )
 
     def forward(self, image, code, rect):
         memory = self.encoder(image)
         embs = self.emb(code, rect.sigmoid())
         outs = self.decoder(embs, memory, tgt_key_padding_mask=(code == 0))
-        outs = self.output(outs).sigmoid()
+        # outs = self.txt_encoder(embs, src_key_padding_mask=(code == 0))
+        # outs = self.projector(outs, memory)
+        # outs = self.output(outs).sigmoid()
+        outs = self.generator(outs)
         # print(outs.shape, code.shape)
         mask = code <= 7
         mask = mask.unsqueeze(-1)
@@ -284,6 +377,8 @@ class Discriminator(nn.Module):
             batch_first=True
         )
         self.txt_encoder = nn.TransformerEncoder(encoder_layer, Config.num_layer)
+        self.projector = CrossAttention(Config.dim, Config.dim, dim_head=Config.dim, heads=Config.num_head, 
+                                        dropout=Config.dropout)
         self.emb = emb
         # self.classifier = nn.Sequential(
         #     nn.Linear(Config.dim * 2, Config.dim),
@@ -292,16 +387,52 @@ class Discriminator(nn.Module):
         #     nn.Linear(Config.dim, 1),
         # )
         self.classifier = nn.Sequential(
-            nn.Linear(Config.dim * 2, 1),
+            nn.Linear(Config.dim, 1),
+            # nn.Tanh()
         )
 
     def forward(self, image, code, rect):
-        image_features = self.encoder(image)[:, 0, :]
+        image_features = self.encoder(image)  # [:, 0, :]
+        # print(image_features.shape)
         embs = self.emb(code, rect)
-        text_features = self.txt_encoder(embs, src_key_padding_mask=(code == 0))[:, 0, :]
-        combined = torch.cat([text_features, image_features], dim=1)
-        return self.classifier(combined)
+        text_features = self.txt_encoder(embs, src_key_padding_mask=(code == 0))
+        outs = self.projector(text_features, image_features)
+        # combined = torch.cat([text_features, image_features], dim=1)
+        return self.classifier(outs[:, 0, :])
 
+
+class MaskDiscriminator(nn.Module):
+
+    def __init__(self, vit, emb):
+        super().__init__()
+        self.encoder = vit
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=Config.dim, 
+            nhead=Config.num_head, 
+            batch_first=True
+        )
+        self.txt_encoder = nn.TransformerEncoder(encoder_layer, Config.num_layer)
+        self.projector = CrossAttention(Config.dim, Config.dim, dim_head=Config.dim, heads=Config.num_head, 
+                                        dropout=Config.dropout)
+        self.emb = emb
+        self.classifier = nn.Sequential(
+            nn.Linear(Config.dim, Config.dim // 2),
+            nn.ReLU(),
+            nn.Dropout(Config.dropout),
+            nn.Linear(Config.dim // 2, 1),
+        )
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(Config.dim, 1),
+        # )
+
+    def forward(self, image, code, rect):
+        image_features = self.encoder(image)  # [:, 0, :]
+        embs = self.emb(code, rect)
+        text_features = self.txt_encoder(embs, src_key_padding_mask=(code == 0))
+        outs = self.projector(text_features, image_features)
+        # combined = torch.cat([text_features, image_features], dim=1)
+        return self.classifier(outs[:, 0, :])
+    
 
 def compute_iou(
     boxes1: torch.Tensor,
@@ -341,13 +472,30 @@ def create_vit():
     return encoder
 
 
+def create_res():
+    resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)  # pretrained ImageNet ResNet-50
+    modules = list(resnet.children())[:-2]
+
+    resnet = nn.Sequential(
+        *modules,
+        nn.AdaptiveAvgPool2d((16, 16)),
+        Rearrange("b c w h -> b c (w h)")
+        )
+    return resnet
+
+
 def create_emb():
     return Embedding()
 
 
 def create_model(args):
-    vit_g = create_vit()
-    vit_d = vit_g if args.share_vit else create_vit()
+    if args.vis == "vit":
+        vit_g = create_vit()
+        vit_d = vit_g if args.share_vis else create_vit()
+    else:
+        vit_g = create_res()
+        vit_d = vit_g if args.share_vis else create_res()
+
 
     emb_g = create_emb()
     emb_d = emb_g if args.share_emb else create_emb()

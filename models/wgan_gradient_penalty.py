@@ -96,7 +96,7 @@ class WGAN_GP(object):
                 # Train with real images
                 d_loss_real = self.D(images, codes, rects)
                 d_loss_real = d_loss_real.mean()
-                d_loss_real.backward(mone)
+                # d_loss_real.backward(mone)
 
                 # Train with fake images
                 z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
@@ -104,19 +104,21 @@ class WGAN_GP(object):
                 fake_rects = self.G(images, codes, z)
                 d_loss_fake = self.D(images, codes, fake_rects)
                 d_loss_fake = d_loss_fake.mean()
-                d_loss_fake.backward(one)
+                # d_loss_fake.backward(one)
 
                 # Train with gradient penalty
-                if self.cuda:
-                    with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False):
-                        gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
-                        gradient_penalty.backward()
-                else:
-                    gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
-                    gradient_penalty.backward()
+                # if self.cuda:
+                #     with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False):
+                #         gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
+                #         gradient_penalty.backward()
+                # else:
+                gradient_penalty = self.calculate_gradient_penalty(images, codes, rects.data, fake_rects.data)
+                # gradient_penalty.backward()
 
 
                 d_loss = d_loss_fake - d_loss_real + gradient_penalty
+                d_loss.backward()
+
                 Wasserstein_D = d_loss_real - d_loss_fake
                 self.d_optimizer.step()
                 print(f'  Discriminator iteration: {d_iter}/{self.critic_iter}, loss_fake: {d_loss_fake}, loss_real: {d_loss_real}')
@@ -142,9 +144,9 @@ class WGAN_GP(object):
             z = torch.randn(codes.size()[0], codes.size()[1], 4).to(self.device)
             fake_rects = self.G(images, codes, z)
             g_loss = self.D(images, codes, fake_rects)
-            g_loss = g_loss.mean()
-            g_loss.backward(mone)
-            g_cost = -g_loss
+            g_loss = -g_loss.mean()
+            g_loss.backward()
+            g_cost = g_loss
             self.g_optimizer.step()
             print(f'Generator iteration: {g_iter}/{self.generator_iters}, g_loss: {g_loss}')
             # break
